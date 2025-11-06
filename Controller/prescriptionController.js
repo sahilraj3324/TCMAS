@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const Prescription = require('../Model/Prescription');
+const { getConnection, sql } = require('../config/database');
 
 // Create a new prescription
 const createPrescription = async (req, res) => {
@@ -31,26 +31,34 @@ const createPrescription = async (req, res) => {
     }
 
     // Generate prescription_id if not provided
-    const id = prescription_id || (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex'));
+    const id = prescription_id || crypto.randomUUID();
 
-    const prescriptionData = {
-      prescription_id: id,
-      appointment_id,
-      doctor_id,
-      patient_id,
-      problem,
-      doctor_notes,
-      medicines,
-      ...(pdf_link !== undefined && { pdf_link }),
-      created_at: new Date()
-    };
-
-    const prescription = await Prescription.create(prescriptionData);
+    const pool = await getConnection();
+    const result = await pool.request()
+      .input('prescription_id', sql.VarChar(50), id)
+      .input('appointment_id', sql.Int, appointment_id)
+      .input('doctor_id', sql.VarChar(50), doctor_id)
+      .input('patient_id', sql.VarChar(50), patient_id)
+      .input('problem', sql.VarChar(255), problem)
+      .input('doctor_notes', sql.Text, doctor_notes)
+      .input('medicines', sql.Text, medicines)
+      .input('pdf_link', sql.VarChar(255), pdf_link || null)
+      .query(`
+        INSERT INTO prescriptions (
+          prescription_id, appointment_id, doctor_id, patient_id, 
+          problem, doctor_notes, medicines, pdf_link, created_at
+        )
+        OUTPUT INSERTED.*
+        VALUES (
+          @prescription_id, @appointment_id, @doctor_id, @patient_id,
+          @problem, @doctor_notes, @medicines, @pdf_link, GETDATE()
+        )
+      `);
 
     res.status(201).json({
       success: true,
       message: 'Prescription created successfully',
-      data: prescription
+      data: result.recordset[0]
     });
   } catch (error) {
     res.status(500).json({
@@ -64,9 +72,13 @@ const createPrescription = async (req, res) => {
 const getPrescriptionById = async (req, res) => {
   try {
     const { id } = req.params;
-    const prescription = await Prescription.findById(id);
+    
+    const pool = await getConnection();
+    const result = await pool.request()
+      .input('prescription_id', sql.VarChar(50), id)
+      .query('SELECT * FROM prescriptions WHERE prescription_id = @prescription_id');
 
-    if (!prescription) {
+    if (result.recordset.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'Prescription not found'
@@ -75,7 +87,7 @@ const getPrescriptionById = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: prescription
+      data: result.recordset[0]
     });
   } catch (error) {
     res.status(500).json({
@@ -85,38 +97,30 @@ const getPrescriptionById = async (req, res) => {
   }
 };
 
-// Get prescription by appointment ID
-const getPrescriptionByAppointmentId = async (req, res) => {
-  try {
-    const { appointmentId } = req.params;
-    const prescription = await Prescription.findByAppointmentId(appointmentId);
-
-    if (!prescription) {
-      return res.status(404).json({
-        success: false,
-        message: 'Prescription not found for this appointment'
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      data: prescription
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// Get prescription with full details
+// Get prescription with details
 const getPrescriptionDetails = async (req, res) => {
   try {
     const { id } = req.params;
-    const prescription = await Prescription.getPrescriptionDetails(id);
+    
+    const pool = await getConnection();
+    const result = await pool.request()
+      .input('prescription_id', sql.VarChar(50), id)
+      .query(`
+        SELECT 
+          p.*,
+          u.first_name as patient_first_name,
+          u.last_name as patient_last_name,
+          u.email as patient_email,
+          d.name as doctor_name,
+          d.specialization as doctor_specialization,
+          d.qualification as doctor_qualification
+        FROM prescriptions p
+        LEFT JOIN users u ON p.patient_id = u.user_id
+        LEFT JOIN doctordetails d ON p.doctor_id = d.doctor_id
+        WHERE p.prescription_id = @prescription_id
+      `);
 
-    if (!prescription) {
+    if (result.recordset.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'Prescription not found'
@@ -125,45 +129,7 @@ const getPrescriptionDetails = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: prescription
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// Get prescriptions by patient ID
-const getPrescriptionsByPatientId = async (req, res) => {
-  try {
-    const { patientId } = req.params;
-    const prescriptions = await Prescription.findByPatientId(patientId);
-
-    res.status(200).json({
-      success: true,
-      count: prescriptions.length,
-      data: prescriptions
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// Get prescriptions by doctor ID
-const getPrescriptionsByDoctorId = async (req, res) => {
-  try {
-    const { doctorId } = req.params;
-    const prescriptions = await Prescription.findByDoctorId(doctorId);
-
-    res.status(200).json({
-      success: true,
-      count: prescriptions.length,
-      data: prescriptions
+      data: result.recordset[0]
     });
   } catch (error) {
     res.status(500).json({
@@ -176,12 +142,25 @@ const getPrescriptionsByDoctorId = async (req, res) => {
 // Get all prescriptions
 const getAllPrescriptions = async (req, res) => {
   try {
-    const prescriptions = await Prescription.findAll();
+    const pool = await getConnection();
+    const result = await pool.request()
+      .query(`
+        SELECT 
+          p.*,
+          u.first_name as patient_first_name,
+          u.last_name as patient_last_name,
+          d.name as doctor_name,
+          d.specialization as doctor_specialization
+        FROM prescriptions p
+        LEFT JOIN users u ON p.patient_id = u.user_id
+        LEFT JOIN doctordetails d ON p.doctor_id = d.doctor_id
+        ORDER BY p.created_at DESC
+      `);
 
     res.status(200).json({
       success: true,
-      count: prescriptions.length,
-      data: prescriptions
+      count: result.recordset.length,
+      data: result.recordset
     });
   } catch (error) {
     res.status(500).json({
@@ -191,7 +170,106 @@ const getAllPrescriptions = async (req, res) => {
   }
 };
 
-// Update prescription (partial update)
+// Get prescriptions by patient ID
+const getPrescriptionsByPatient = async (req, res) => {
+  try {
+    const { patientId } = req.params; // Fixed: was patient_id, should be patientId
+    
+    const pool = await getConnection();
+    const result = await pool.request()
+      .input('patient_id', sql.VarChar(50), patientId)
+      .query(`
+        SELECT 
+          p.*,
+          d.name as doctor_name,
+          d.specialization as doctor_specialization
+        FROM prescriptions p
+        LEFT JOIN doctordetails d ON p.doctor_id = d.doctor_id
+        WHERE p.patient_id = @patient_id
+        ORDER BY p.created_at DESC
+      `);
+
+    res.status(200).json({
+      success: true,
+      count: result.recordset.length,
+      data: result.recordset
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Get prescriptions by doctor ID
+const getPrescriptionsByDoctor = async (req, res) => {
+  try {
+    const { doctorId } = req.params; // Fixed: was doctor_id, should be doctorId
+    
+    const pool = await getConnection();
+    const result = await pool.request()
+      .input('doctor_id', sql.VarChar(50), doctorId)
+      .query(`
+        SELECT 
+          p.*,
+          u.first_name as patient_first_name,
+          u.last_name as patient_last_name,
+          u.email as patient_email
+        FROM prescriptions p
+        LEFT JOIN users u ON p.patient_id = u.user_id
+        WHERE p.doctor_id = @doctor_id
+        ORDER BY p.created_at DESC
+      `);
+
+    res.status(200).json({
+      success: true,
+      count: result.recordset.length,
+      data: result.recordset
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Get prescriptions by appointment ID
+const getPrescriptionsByAppointment = async (req, res) => {
+  try {
+    const { appointment_id } = req.params;
+    
+    const pool = await getConnection();
+    const result = await pool.request()
+      .input('appointment_id', sql.Int, appointment_id)
+      .query(`
+        SELECT 
+          p.*,
+          u.first_name as patient_first_name,
+          u.last_name as patient_last_name,
+          d.name as doctor_name
+        FROM prescriptions p
+        LEFT JOIN users u ON p.patient_id = u.user_id
+        LEFT JOIN doctordetails d ON p.doctor_id = d.doctor_id
+        WHERE p.appointment_id = @appointment_id
+        ORDER BY p.created_at DESC
+      `);
+
+    res.status(200).json({
+      success: true,
+      count: result.recordset.length,
+      data: result.recordset
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Update prescription
 const updatePrescription = async (req, res) => {
   try {
     const { id } = req.params;
@@ -205,36 +283,151 @@ const updatePrescription = async (req, res) => {
       pdf_link
     } = req.body;
 
-    const prescription = await Prescription.findById(id);
-    if (!prescription) {
+    const pool = await getConnection();
+    
+    // Check if prescription exists
+    const checkResult = await pool.request()
+      .input('prescription_id', sql.VarChar(50), id)
+      .query('SELECT * FROM prescriptions WHERE prescription_id = @prescription_id');
+
+    if (checkResult.recordset.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'Prescription not found'
       });
     }
 
-    const updateData = {};
-    if (appointment_id !== undefined) updateData.appointment_id = appointment_id;
-    if (doctor_id !== undefined) updateData.doctor_id = doctor_id;
-    if (patient_id !== undefined) updateData.patient_id = patient_id;
-    if (problem !== undefined) updateData.problem = problem;
-    if (doctor_notes !== undefined) updateData.doctor_notes = doctor_notes;
-    if (medicines !== undefined) updateData.medicines = medicines;
-    if (pdf_link !== undefined) updateData.pdf_link = pdf_link;
+    // Build dynamic update query
+    const updates = [];
+    const request = pool.request();
+    request.input('prescription_id', sql.VarChar(50), id);
 
-    if (Object.keys(updateData).length === 0) {
+    if (appointment_id !== undefined) {
+      updates.push('appointment_id = @appointment_id');
+      request.input('appointment_id', sql.Int, appointment_id);
+    }
+    if (doctor_id !== undefined) {
+      updates.push('doctor_id = @doctor_id');
+      request.input('doctor_id', sql.VarChar(50), doctor_id);
+    }
+    if (patient_id !== undefined) {
+      updates.push('patient_id = @patient_id');
+      request.input('patient_id', sql.VarChar(50), patient_id);
+    }
+    if (problem !== undefined) {
+      updates.push('problem = @problem');
+      request.input('problem', sql.VarChar(255), problem);
+    }
+    if (doctor_notes !== undefined) {
+      updates.push('doctor_notes = @doctor_notes');
+      request.input('doctor_notes', sql.Text, doctor_notes);
+    }
+    if (medicines !== undefined) {
+      updates.push('medicines = @medicines');
+      request.input('medicines', sql.Text, medicines);
+    }
+    if (pdf_link !== undefined) {
+      updates.push('pdf_link = @pdf_link');
+      request.input('pdf_link', sql.VarChar(255), pdf_link);
+    }
+
+    if (updates.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'No fields provided to update'
+        message: 'No fields to update'
       });
     }
 
-    const updatedPrescription = await Prescription.update(id, updateData);
+    const result = await request.query(`
+      UPDATE prescriptions
+      SET ${updates.join(', ')}
+      OUTPUT INSERTED.*
+      WHERE prescription_id = @prescription_id
+    `);
 
     res.status(200).json({
       success: true,
       message: 'Prescription updated successfully',
-      data: updatedPrescription
+      data: result.recordset[0]
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Delete prescription
+const deletePrescription = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const pool = await getConnection();
+    
+    // Check if prescription exists
+    const checkResult = await pool.request()
+      .input('prescription_id', sql.VarChar(50), id)
+      .query('SELECT * FROM prescriptions WHERE prescription_id = @prescription_id');
+
+    if (checkResult.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Prescription not found'
+      });
+    }
+
+    await pool.request()
+      .input('prescription_id', sql.VarChar(50), id)
+      .query('DELETE FROM prescriptions WHERE prescription_id = @prescription_id');
+
+    res.status(200).json({
+      success: true,
+      message: 'Prescription deleted successfully'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Search prescriptions
+const searchPrescriptions = async (req, res) => {
+  try {
+    const { query } = req.query;
+
+    if (!query) {
+      return res.status(400).json({
+        success: false,
+        message: 'Search query is required'
+      });
+    }
+
+    const pool = await getConnection();
+    const result = await pool.request()
+      .input('query', sql.VarChar(255), `%${query}%`)
+      .query(`
+        SELECT 
+          p.*,
+          u.first_name as patient_first_name,
+          u.last_name as patient_last_name,
+          d.name as doctor_name
+        FROM prescriptions p
+        LEFT JOIN users u ON p.patient_id = u.user_id
+        LEFT JOIN doctordetails d ON p.doctor_id = d.doctor_id
+        WHERE 
+          p.problem LIKE @query OR
+          p.doctor_notes LIKE @query OR
+          p.medicines LIKE @query
+        ORDER BY p.created_at DESC
+      `);
+
+    res.status(200).json({
+      success: true,
+      count: result.recordset.length,
+      data: result.recordset
     });
   } catch (error) {
     res.status(500).json({
@@ -257,19 +450,34 @@ const updatePdfLink = async (req, res) => {
       });
     }
 
-    const prescription = await Prescription.findById(id);
-    if (!prescription) {
+    const pool = await getConnection();
+    
+    // Check if prescription exists
+    const checkResult = await pool.request()
+      .input('prescription_id', sql.VarChar(50), id)
+      .query('SELECT * FROM prescriptions WHERE prescription_id = @prescription_id');
+
+    if (checkResult.recordset.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'Prescription not found'
       });
     }
 
-    await Prescription.updatePdfLink(id, pdf_link);
+    const result = await pool.request()
+      .input('prescription_id', sql.VarChar(50), id)
+      .input('pdf_link', sql.VarChar(255), pdf_link)
+      .query(`
+        UPDATE prescriptions
+        SET pdf_link = @pdf_link
+        OUTPUT INSERTED.*
+        WHERE prescription_id = @prescription_id
+      `);
 
     res.status(200).json({
       success: true,
-      message: 'PDF link updated successfully'
+      message: 'PDF link updated successfully',
+      data: result.recordset[0]
     });
   } catch (error) {
     res.status(500).json({
@@ -279,41 +487,16 @@ const updatePdfLink = async (req, res) => {
   }
 };
 
-// Delete prescription
-const deletePrescription = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const prescription = await Prescription.findById(id);
-    if (!prescription) {
-      return res.status(404).json({
-        success: false,
-        message: 'Prescription not found'
-      });
-    }
-
-    await Prescription.delete(id);
-
-    res.status(200).json({
-      success: true,
-      message: 'Prescription deleted successfully'
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// Get total prescription count
+// Get prescription count
 const getPrescriptionCount = async (req, res) => {
   try {
-    const count = await Prescription.count();
+    const pool = await getConnection();
+    const result = await pool.request()
+      .query('SELECT COUNT(*) as count FROM prescriptions');
 
     res.status(200).json({
       success: true,
-      data: { total: count }
+      count: result.recordset[0].count
     });
   } catch (error) {
     res.status(500).json({
@@ -326,13 +509,17 @@ const getPrescriptionCount = async (req, res) => {
 module.exports = {
   createPrescription,
   getPrescriptionById,
-  getPrescriptionByAppointmentId,
   getPrescriptionDetails,
-  getPrescriptionsByPatientId,
-  getPrescriptionsByDoctorId,
   getAllPrescriptions,
+  getPrescriptionsByPatient,
+  getPrescriptionsByPatientId: getPrescriptionsByPatient, // Alias
+  getPrescriptionsByDoctor,
+  getPrescriptionsByDoctorId: getPrescriptionsByDoctor, // Alias
+  getPrescriptionsByAppointment,
+  getPrescriptionByAppointmentId: getPrescriptionsByAppointment, // Alias
   updatePrescription,
   updatePdfLink,
   deletePrescription,
+  searchPrescriptions,
   getPrescriptionCount
 };

@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 require('dotenv').config();
 const { getConnection, closeConnection } = require('./config/database');
 const swaggerUi = require('swagger-ui-express');
@@ -9,15 +10,16 @@ const app = express();
 const PORT = process.env.PORT || 8000;
 
 // Middleware
-// CORS Configuration - Allow all domains
+// CORS Configuration - Allow credentials for cookies
 const corsOptions = {
-  origin: '*', // Allow all origins
+  origin: ['http://localhost:3000','http://localhost:3001','http://localhost:3002','http://localhost:3003','http://localhost:3004', 'http://localhost:5173', 'http://localhost:5174'], // Frontend URLs
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
-  credentials: false, // Set to false when origin is '*'
+  credentials: true, // Enable credentials (cookies)
   optionsSuccessStatus: 200
 };
 app.use(cors(corsOptions));
+app.use(cookieParser()); // Parse cookies
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

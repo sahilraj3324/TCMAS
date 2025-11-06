@@ -22,8 +22,13 @@ const DoctorDetailsSchema = {
     phone_number: { type: sql.VarChar(20), required: false },
     is_active: { type: sql.Bit, required: false, default: 1 },
     clinic_name: { type: sql.VarChar(150), required: false },
-    clinic_address: { type: sql.VarChar(255), required: false }
+    clinic_address: { type: sql.VarChar(255), required: false },
+
+    // 🔐 Authentication fields
+    username: { type: sql.VarChar(100), required: true, unique: true },
+    password: { type: sql.VarChar(255), required: true } // should store hashed passwords
   },
+
   relationships: {
     user: { type: 'belongsTo', model: 'User', foreignKey: 'doctor_id' },
     appointments: { type: 'hasMany', model: 'Appointment', foreignKey: 'doctor_id' },

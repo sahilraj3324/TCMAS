@@ -21,6 +21,9 @@ const MedicalRecordSchema = {
       foreignKey: { table: 'users', column: 'user_id' } 
     },
 
+    // Report name or title (e.g., "Blood Test Report", "MRI Scan")
+    report_name: { type: sql.VarChar(150), required: true },
+
     // Medical issue being treated or observed
     problem: { type: sql.VarChar(255), required: true },
 

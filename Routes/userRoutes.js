@@ -1,7 +1,10 @@
 const express = require('express');
 const router = express.Router();
+const { authenticateToken } = require('../middleware/auth');
 const {
   login,
+  logout,
+  getCurrentUser,
   createUser,
   getUserById,
   getUserByEmail,
@@ -61,6 +64,40 @@ const {
  *         description: Server error
  */
 router.post('/login', login);
+
+/**
+ * @swagger
+ * /api/users/logout:
+ *   post:
+ *     summary: User logout
+ *     description: Logout user and clear authentication cookie
+ *     tags: [Users]
+ *     responses:
+ *       200:
+ *         description: Logout successful
+ *       500:
+ *         description: Server error
+ */
+router.post('/logout', logout);
+
+/**
+ * @swagger
+ * /api/users/me:
+ *   get:
+ *     summary: Get current user
+ *     description: Get the currently authenticated user's information
+ *     tags: [Users]
+ *     security:
+ *       - cookieAuth: []
+ *     responses:
+ *       200:
+ *         description: Current user information
+ *       401:
+ *         description: Not authenticated
+ *       404:
+ *         description: User not found
+ */
+router.get('/me', authenticateToken, getCurrentUser);
 
 /**
  * @swagger

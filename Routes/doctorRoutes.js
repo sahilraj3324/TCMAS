@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
   createDoctorDetails,
+  login,
   getDoctorById,
   getDoctorWithUserInfo,
   getAllDoctors,
@@ -11,6 +12,9 @@ const {
   deleteDoctor,
   searchDoctors
 } = require('../Controller/doctorController');
+
+// Doctor login
+router.post('/login', login);
 
 // Create doctor details
 router.post('/', createDoctorDetails);

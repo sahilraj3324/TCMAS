@@ -1,3 +1,4 @@
+const jwt = require('jsonwebtoken');
 const { sql, getConnection } = require('../config/database');
 const crypto = require('crypto');
 
@@ -44,13 +45,35 @@ const login = async (req, res) => {
       });
     }
 
+    // Generate JWT token
+    const token = jwt.sign(
+      {
+        id: receptionist.id,
+        email: receptionist.email,
+        username: receptionist.username,
+        name: receptionist.name,
+        role: 'receptionist'
+      },
+      process.env.JWT_SECRET || 'your-secret-key',
+      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    );
+
+    // Set token in httpOnly cookie
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    });
+
     // Remove password from response
     delete receptionist.password;
 
     res.status(200).json({
       success: true,
       message: 'Login successful',
-      data: receptionist
+      data: receptionist,
+      token: token
     });
   } catch (error) {
     res.status(500).json({
